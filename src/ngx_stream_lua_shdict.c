@@ -726,6 +726,7 @@ ngx_stream_lua_shdict_get_keys(lua_State *L)
     ngx_stream_lua_shdict_ctx_t   *ctx;
     ngx_shm_zone_t                *zone;
     ngx_time_t                    *tp;
+    int                            start = 0;
     int                            total = 0;
     int                            attempts = 1024;
     uint64_t                       now;
@@ -733,8 +734,8 @@ ngx_stream_lua_shdict_get_keys(lua_State *L)
 
     n = lua_gettop(L);
 
-    if (n != 1 && n != 2) {
-        return luaL_error(L, "expecting 1 or 2 argument(s), "
+    if (n != 1 && n != 2 && n != 3) {
+        return luaL_error(L, "expecting 1 or 2 or 3 argument(s), "
                           "but saw %d", n);
     }
 
@@ -747,6 +748,10 @@ ngx_stream_lua_shdict_get_keys(lua_State *L)
 
     if (n == 2) {
         attempts = luaL_checkint(L, 2);
+    } else if (n == 3) {
+        start = luaL_checkint(L, 2);
+        attempts = luaL_checkint(L, 3);
+        attempts = start + attempts;
     }
 
     ctx = zone->data;
@@ -774,6 +779,10 @@ ngx_stream_lua_shdict_get_keys(lua_State *L)
 
         if (sd->expires == 0 || sd->expires > now) {
             total++;
+            if(start && total < start) {
+                q = prev;
+                continue;
+            }
             if (attempts && total == attempts) {
                 break;
             }
@@ -782,7 +791,7 @@ ngx_stream_lua_shdict_get_keys(lua_State *L)
         q = prev;
     }
 
-    lua_createtable(L, total, 0);
+    lua_createtable(L, total - start, 0);
 
     /* second run through: add keys to table */
 
@@ -795,8 +804,13 @@ ngx_stream_lua_shdict_get_keys(lua_State *L)
         sd = ngx_queue_data(q, ngx_stream_lua_shdict_node_t, queue);
 
         if (sd->expires == 0 || sd->expires > now) {
+            total ++;
+            if(start && total < start) {
+                q = prev;
+                continue;
+            }
             lua_pushlstring(L, (char *) sd->data, sd->key_len);
-            lua_rawseti(L, -2, ++total);
+            lua_rawseti(L, -2, total - start);
             if (attempts && total == attempts) {
                 break;
             }
@@ -805,10 +819,13 @@ ngx_stream_lua_shdict_get_keys(lua_State *L)
         q = prev;
     }
 
+    // return now pointer
+    lua_pushnumber(L, total);
+
     ngx_shmtx_unlock(&ctx->shpool->mutex);
 
     /* table is at top of stack */
-    return 1;
+    return 2;
 }
 
 
